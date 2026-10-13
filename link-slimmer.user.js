@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         链接精简 · Link Slimmer
 // @namespace    link-slimmer.local
-// @version      1.2.0
+// @version      1.3.0
 // @description  悬浮球自动吸附浏览器边缘,一键提取文本中所有链接并精简为最简形式;内置 B站/百度/豆瓣/知乎/微博/淘宝/天猫/京东/抖音/快手/YouTube/小红书 平台规则,页面右上角可复制当前网页地址
 // @author       guliacer
 // @match        *://*/*
@@ -1133,35 +1133,58 @@
   ta.addEventListener('mousedown', () => setTimeout(rememberCaret, 0));
   panel.addEventListener('mousedown', () => setTimeout(rememberCaret, 0), true);
 
-  /* ---- 右上角按钮的滑出行为 ---- */
+/* ---- 右上角按钮的滑出行为 ---- */
 
-  // 鼠标靠近页面顶部（或已聚焦到按钮上）时滑出，否则收回，避免遮挡网页内容
+  // 鼠标靠近页面顶部时滑出,停留 LINGER_MS 后自动收回,
+  // 这样用户既可以点击它,也可以点击它原本挡住的网页内容,不用手动移开鼠标
   const SHOW_ZONE = 110;
-  let pageBtnAutoHide = false;
+  const LINGER_MS = 3000;
 
-  function setPageBtnVisible(show) {
-    pageBtn.classList.toggle('show', !!show);
+  let btnTimer = null;
+  let btnFocused = false;   // 键盘 Tab 聚焦期间不收回
+  let inTopZone = false;    // 鼠标是否停在顶部热区内,用于避免热区边缘反复抖动
+
+  function clearBtnTimer() {
+    if (btnTimer) { clearTimeout(btnTimer); btnTimer = null; }
   }
 
-  // 鼠标进入顶部热区即滑出，之后不再自动跟踪，
-  // 由离开顶部区域 / 移出按钮来收回，避免在热区边缘反复抖动
+  // 收回按钮。鼠标悬停或键盘聚焦时不收,避免用户正要点击时按钮消失
+  function hidePageBtn() {
+    if (pageBtn.matches(':hover') || btnFocused) return;
+    pageBtn.classList.remove('show');
+  }
+
+  function scheduleHide() {
+    clearBtnTimer();
+    btnTimer = setTimeout(() => { btnTimer = null; hidePageBtn(); }, LINGER_MS);
+  }
+
+  // 滑出并开始倒计时
+  function showPageBtn() {
+    pageBtn.classList.add('show');
+    scheduleHide();
+  }
+
+  // 鼠标进入顶部热区即滑出;离开热区立刻收回。
+  // 自动收回后需要先离开热区再回来才会重新滑出,避免鼠标停在顶部时反复闪现
   document.addEventListener('mousemove', (e) => {
     if (e.clientY <= SHOW_ZONE) {
-      if (!pageBtnAutoHide) setPageBtnVisible(true);
-      pageBtnAutoHide = true;
-    } else if (pageBtnAutoHide && !pageBtn.matches(':hover')) {
-      setPageBtnVisible(false);
-      pageBtnAutoHide = false;
+      if (!inTopZone) { inTopZone = true; showPageBtn(); }
+    } else if (inTopZone) {
+      inTopZone = false;
+      clearBtnTimer();
+      if (!pageBtn.matches(':hover')) hidePageBtn();
     }
   }, true);
 
-  pageBtn.addEventListener('mouseenter', () => setPageBtnVisible(true));
+  pageBtn.addEventListener('mouseenter', () => { clearBtnTimer(); pageBtn.classList.add('show'); });
   pageBtn.addEventListener('mouseleave', () => {
-    if (!pageBtnAutoHide) setPageBtnVisible(false);
+    if (inTopZone) scheduleHide();
+    else { clearBtnTimer(); hidePageBtn(); }
   });
-  // 键盘可达性：Tab 聚焦时也显示
-  pageBtn.addEventListener('focus', () => setPageBtnVisible(true));
-  pageBtn.addEventListener('blur', () => { if (!pageBtnAutoHide) setPageBtnVisible(false); });
+  // 键盘可达性:Tab 聚焦时保持显示,失焦后重新计时
+  pageBtn.addEventListener('focus', () => { btnFocused = true; clearBtnTimer(); pageBtn.classList.add('show'); });
+  pageBtn.addEventListener('blur', () => { btnFocused = false; scheduleHide(); });
 
   /* ============================================================
    * 九、全局事件
@@ -1199,7 +1222,7 @@
 
   // SPA 站点在客户端路由切换时地址栏会变，重新读取 location.href 即可，
   // 这里不需要额外处理；这里只确保按钮始终存在于最上层
-  setPageBtnVisible(false);
+  pageBtn.classList.remove('show');
 
   try {
     if (typeof GM_registerMenuCommand === 'function') {

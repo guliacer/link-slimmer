@@ -3,7 +3,7 @@
 一个 Tampermonkey / 油猴脚本:从任意文本里提取链接并精简为最简形式,顺带清理掉一大票追踪参数和跳转中转。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.0-brightgreen.svg)](#)
+[![Version](https://img.shields.io/badge/version-1.3.0-brightgreen.svg)](#)
 
 ---
 
@@ -50,6 +50,8 @@ https://xiaohongshu.com/explore/6885e9af000000001c0345e3?xsec_token=ABHOD…%3D
 ### 页面右上角按钮
 
 页面右上角有个"复制本页地址"按钮,平时滑出视口只留一条细边,**鼠标移到页面顶部才滑出**,不遮挡网页内容。
+
+滑出后**停留 3 秒自动收回** —— 这样你既可以点击它,也可以点击它原本挡住的网页内容,不用手动把鼠标移开。鼠标悬停在按钮上时不会收回(想点就点),鼠标离开顶部区域则立即收回。
 
 - 点击 → 复制**精简后**的当前网页地址
 - 按住 <kbd>Alt</kbd> 点击 → 复制**原样**地址
@@ -141,7 +143,7 @@ https://xiaohongshu.com/explore/6885e9af000000001c0345e3?xsec_token=ABHOD…%3D
 | 拖悬浮球 | 移动位置,松手自动吸附边缘 |
 | 粘贴文本 → 提取并精简 | 提取所有链接并精简 |
 | <kbd>Ctrl/⌘</kbd> + <kbd>Enter</kbd> | 在文本框里快捷执行 |
-| 鼠标移到页面顶部 | 滑出"复制本页地址"按钮 |
+| 鼠标移到页面顶部 | 滑出"复制本页地址"按钮(3 秒后自动收回) |
 | <kbd>Alt</kbd> + 点复制按钮 | 复制原样地址而非精简地址 |
 | <kbd>Esc</kbd> | 收起面板 |
 
