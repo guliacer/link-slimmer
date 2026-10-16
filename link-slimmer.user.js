@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         链接精简 · Link Slimmer
 // @namespace    link-slimmer.local
-// @version      1.3.0
-// @description  悬浮球自动吸附浏览器边缘,一键提取文本中所有链接并精简为最简形式;内置 B站/百度/豆瓣/知乎/微博/淘宝/天猫/京东/抖音/快手/YouTube/小红书 平台规则,页面右上角可复制当前网页地址
+// @version      1.4.0
+// @description  悬浮球与复制地址按钮均可拖动吸附浏览器边缘并记忆位置,一键提取文本中所有链接并精简为最简形式;内置 B站/百度/豆瓣/知乎/微博/淘宝/天猫/京东/抖音/快手/YouTube/小红书 平台规则,页面右上角可复制当前网页地址
 // @author       guliacer
 // @match        *://*/*
 // @match        file:///*
@@ -614,8 +614,8 @@
     /* ---- 页面右上角快捷按钮：复制当前网页地址 ---- */
     .pagebtn {
       position: fixed;
-      top: 14px; right: 0;
-      /* 平时整块滑出视口右侧只留一条细线，鼠标移到页面顶部才滑出，避免遮挡网页内容 */
+      left: auto; right: 0; top: 0;
+      /* 默认吸附右侧:平时整块滑出视口,鼠标靠近它所在的边缘位置才滑出 */
       transform: translateX(100%);
       display: flex; align-items: center; gap: 7px;
       padding: 10px 18px 10px 14px;
@@ -624,16 +624,21 @@
       color: #fff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
       font-size: 12.5px; font-weight: 600; white-space: nowrap;
-      cursor: pointer;
+      cursor: grab;
       border: none;
       box-shadow: 0 4px 16px rgba(104,92,255,.4), inset 0 0 0 1px rgba(255,255,255,.18);
       user-select: none;
       -webkit-user-select: none;
+      touch-action: none;
       z-index: 3;
       transition: transform .24s cubic-bezier(.34,1.4,.64,1), background .15s ease;
     }
     .pagebtn svg { width: 15px; height: 15px; flex: none; }
     .pagebtn:hover { background: linear-gradient(145deg, #7f9aff, #8a6bff); }
+    /* 吸附左侧时反向滑出,圆角也跟着翻转 */
+    .pagebtn.side-left { left: 0; right: auto; transform: translateX(-100%); border-radius: 0 14px 14px 0; }
+    .pagebtn.dragging { transition: none; cursor: grabbing; }
+    /* 放在最后,保证 show 能压过 side-left 的位移 */
     .pagebtn.show { transform: translateX(0); }
     .pagebtn:disabled { cursor: default; }
     .pagebtn.error { background: linear-gradient(145deg, #ff8f8f, #f26b6b); }
@@ -687,7 +692,7 @@
   // ---- 页面右上角快捷按钮 ----
   const pageBtn = document.createElement('div');
   pageBtn.className = 'pagebtn';
-  pageBtn.title = '复制当前网页地址（已精简）· 按住 Alt 点击复制原样地址';
+  pageBtn.title = '复制当前网页地址(已精简)· 按住 Alt 点击复制原样地址 · 可拖动调整位置';
   pageBtn.innerHTML =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '<rect x="9" y="9" width="12" height="12" rx="2.5"></rect>' +
@@ -1076,7 +1081,11 @@
     });
   }
 
-  pageBtn.addEventListener('click', (e) => copyPageAddress(pageBtn, true, e.altKey));
+pageBtn.addEventListener('click', (e) => {
+    // 拖动结束浏览器会补发一次 click,吞掉它,避免拖完位置就误触发复制
+    if (btnSuppressClick) { e.preventDefault(); e.stopPropagation(); return; }
+    copyPageAddress(pageBtn, true, e.altKey);
+  });
   btnCopyPage.addEventListener('click', (e) => copyPageAddress(btnCopyPage, false, e.altKey));
 
   // 复制：把文本框里的内容写入系统剪贴板
@@ -1133,19 +1142,60 @@
   ta.addEventListener('mousedown', () => setTimeout(rememberCaret, 0));
   panel.addEventListener('mousedown', () => setTimeout(rememberCaret, 0), true);
 
-/* ---- 右上角按钮的滑出行为 ---- */
+/* ---- 右上角按钮:拖动吸附 + 跟随位置的唤出 ---- */
 
-  // 鼠标靠近页面顶部时滑出,停留 LINGER_MS 后自动收回,
-  // 这样用户既可以点击它,也可以点击它原本挡住的网页内容,不用手动移开鼠标
-  const SHOW_ZONE = 110;
-  const LINGER_MS = 3000;
+  // 按钮可拖动并吸附到左/右边缘,位置会记住;
+  // 鼠标靠近它所在的那条边缘位置就滑出,停留 LINGER_MS 后自动收回,
+  // 这样用户既可以点击它,也可以点击它原本挡住的网页内容
+  const LINGER_MS = 3000;   // 滑出后停留时长
+  const EDGE_ZONE = 90;     // 距所在边缘多少像素内算「靠近」
+  const VERT_PAD = 46;      // 按钮上下各放宽多少像素,便于鼠标够到
+
+  const btnState = (function () {
+    const saved = store.get('pageBtnPos', null);
+    if (saved && typeof saved === 'object') {
+      return {
+        side: saved.side === 'left' ? 'left' : 'right',
+        ratio: typeof saved.ratio === 'number' ? saved.ratio : 0.06
+      };
+    }
+    return { side: 'right', ratio: 0.06 };
+  })();
 
   let btnTimer = null;
   let btnFocused = false;   // 键盘 Tab 聚焦期间不收回
-  let inTopZone = false;    // 鼠标是否停在顶部热区内,用于避免热区边缘反复抖动
+  let inZone = false;       // 鼠标是否停在唤出区内,避免边缘处反复抖动
+  let btnDragging = false;
+  let btnMoved = false;
+  let btnSuppressClick = false;
 
   function clearBtnTimer() {
     if (btnTimer) { clearTimeout(btnTimer); btnTimer = null; }
+  }
+
+  // 按当前 side / ratio 摆放按钮
+  function layoutPageBtn() {
+    const vh = window.innerHeight;
+    const h = pageBtn.offsetHeight || 38;
+    let cy = btnState.ratio * vh;
+    cy = Math.max(h / 2 + 4, Math.min(cy, vh - h / 2 - 4));
+    btnState.ratio = cy / vh;
+    // 水平方向交给 CSS 的 left/right 锚定:早期 offsetWidth 可能为 0,
+    // 靠测量宽度算 left 会在初始化时算错位置
+    pageBtn.style.left = '';
+    pageBtn.style.right = '';
+    pageBtn.style.top = (cy - h / 2) + 'px';
+    pageBtn.classList.toggle('side-left', btnState.side === 'left');
+  }
+
+  // 鼠标是否落在按钮当前的唤出区(所在边缘 + 按钮上下附近)
+  function inRevealZone(x, y) {
+    const nearEdge = btnState.side === 'right'
+      ? x >= window.innerWidth - EDGE_ZONE
+      : x <= EDGE_ZONE;
+    if (!nearEdge) return false;
+    const rect = pageBtn.getBoundingClientRect();
+    return y >= rect.top - VERT_PAD && y <= rect.bottom + VERT_PAD;
   }
 
   // 收回按钮。鼠标悬停或键盘聚焦时不收,避免用户正要点击时按钮消失
@@ -1161,17 +1211,19 @@
 
   // 滑出并开始倒计时
   function showPageBtn() {
+    layoutPageBtn();
     pageBtn.classList.add('show');
     scheduleHide();
   }
 
-  // 鼠标进入顶部热区即滑出;离开热区立刻收回。
-  // 自动收回后需要先离开热区再回来才会重新滑出,避免鼠标停在顶部时反复闪现
+  // 鼠标进入唤出区即滑出;离开立刻收回。
+  // 自动收回后需先离开唤出区再回来才会重新滑出,避免鼠标停在边缘时反复闪现
   document.addEventListener('mousemove', (e) => {
-    if (e.clientY <= SHOW_ZONE) {
-      if (!inTopZone) { inTopZone = true; showPageBtn(); }
-    } else if (inTopZone) {
-      inTopZone = false;
+    if (btnDragging) return;
+    if (inRevealZone(e.clientX, e.clientY)) {
+      if (!inZone) { inZone = true; showPageBtn(); }
+    } else if (inZone) {
+      inZone = false;
       clearBtnTimer();
       if (!pageBtn.matches(':hover')) hidePageBtn();
     }
@@ -1179,12 +1231,73 @@
 
   pageBtn.addEventListener('mouseenter', () => { clearBtnTimer(); pageBtn.classList.add('show'); });
   pageBtn.addEventListener('mouseleave', () => {
-    if (inTopZone) scheduleHide();
+    if (inZone) scheduleHide();
     else { clearBtnTimer(); hidePageBtn(); }
   });
   // 键盘可达性:Tab 聚焦时保持显示,失焦后重新计时
   pageBtn.addEventListener('focus', () => { btnFocused = true; clearBtnTimer(); pageBtn.classList.add('show'); });
   pageBtn.addEventListener('blur', () => { btnFocused = false; scheduleHide(); });
+
+  /* ---- 拖动按钮调整位置 ---- */
+
+  let btnStartX = 0;
+  let btnStartY = 0;
+  let btnOrigLeft = 0;
+  let btnOrigTop = 0;
+
+  pageBtn.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    btnDragging = true;
+    btnMoved = false;
+    btnSuppressClick = false;   // 新一轮交互,重置「拖动后吞掉点击」标记
+    btnStartX = e.clientX;
+    btnStartY = e.clientY;
+    const rect = pageBtn.getBoundingClientRect();
+    btnOrigLeft = rect.left;
+    btnOrigTop = rect.top;
+    clearBtnTimer();
+    // 必须把 right 置为 auto:否则 position:fixed 且 width:auto 时,
+    // 内联 left 与 CSS 的 right 会同时生效,元素被横向拉伸到整条视口宽
+    pageBtn.style.right = 'auto';
+    pageBtn.classList.add('show', 'dragging');
+    try { pageBtn.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  pageBtn.addEventListener('pointermove', (e) => {
+    if (!btnDragging) return;
+    const dx = e.clientX - btnStartX;
+    const dy = e.clientY - btnStartY;
+    if (!btnMoved && Math.hypot(dx, dy) > 6) btnMoved = true;
+    if (!btnMoved) return;
+    const w = pageBtn.offsetWidth;
+    const h = pageBtn.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    pageBtn.style.left = Math.max(0, Math.min(btnOrigLeft + dx, vw - w)) + 'px';
+    pageBtn.style.top = Math.max(0, Math.min(btnOrigTop + dy, vh - h)) + 'px';
+    e.preventDefault();
+  });
+
+  function endBtnDrag(e) {
+    if (!btnDragging) return;
+    btnDragging = false;
+    pageBtn.classList.remove('dragging');
+    try { pageBtn.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    if (!btnMoved) return;   // 没移动,交给 click 处理复制
+    // 松手后吸附到最近的左/右边缘,并记住所在边与高度
+    const rect = pageBtn.getBoundingClientRect();
+    btnState.side = (rect.left + rect.width / 2) < window.innerWidth / 2 ? 'left' : 'right';
+    btnState.ratio = (rect.top + rect.height / 2) / window.innerHeight;
+    store.set('pageBtnPos', { side: btnState.side, ratio: btnState.ratio });
+    layoutPageBtn();
+    // 拖动结束浏览器还会补一次 click,标记后由 click 处理器吞掉,避免误触发复制
+    btnSuppressClick = true;
+  }
+
+  pageBtn.addEventListener('pointerup', endBtnDrag);
+  pageBtn.addEventListener('pointercancel', endBtnDrag);
 
   /* ============================================================
    * 九、全局事件
@@ -1210,6 +1323,7 @@
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       layoutBall();
+      layoutPageBtn();
       if (!panel.hidden) layoutPanel();
     }, 80);
   });
@@ -1223,6 +1337,7 @@
   // SPA 站点在客户端路由切换时地址栏会变，重新读取 location.href 即可，
   // 这里不需要额外处理；这里只确保按钮始终存在于最上层
   pageBtn.classList.remove('show');
+  layoutPageBtn();
 
   try {
     if (typeof GM_registerMenuCommand === 'function') {
